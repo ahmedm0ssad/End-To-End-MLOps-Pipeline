@@ -1,3 +1,6 @@
+# Docker Compose file to orchestrate MLflow + Training services
+# Run with: docker compose up --build
+
 version: "3.8"
 
 services:
@@ -9,5 +12,63 @@ services:
     # Name the container
     container_name: iris-trainer
 
-    # Run the training script
-    command: ["conda", "run", "-n", "mlops-dev", "python", "train.py"]
+    # Tell train.py to send logs to the MLflow container
+    # instead of saving locally
+    environment:
+      - MLFLOW_TRACKING_URI=http://mlflow:5000   # "mlflow" = service name not a domain
+
+    # Mount local folders into the container
+    # format: ./local_folder : /container_folder
+    volumes:
+      - ./mlruns:/mlruns                    # share experiments & runs with MLflow container
+      - ./outputs:/Development/outputs      # save confusion_matrix.png to your machine
+
+    # Wait for MLflow container to be ready before starting training
+    # Without this: train starts → MLflow not ready → ❌ connection refused
+    depends_on:
+      - mlflow
+
+    # Join the shared network so train can talk to mlflow by service name
+    networks:
+      - mlops-network
+
+  # ── MLflow Tracking Server ───────────────────────────────────
+  mlflow:
+    # Use the official MLflow image — no need to build a Dockerfile
+    image: ghcr.io/mlflow/mlflow:latest
+
+    # Name the container
+    container_name: mlops-mlflow
+
+    # Expose MLflow UI on port 5000
+    # Access it at http://localhost:5000 in your browser
+    ports:
+      - "5000:5000"   # format: host_port:container_port
+
+    # Share the same mlruns folder with the train container
+    # So MLflow can read & display the experiments logged by train.py
+    volumes:
+      - ./mlruns:/mlruns
+
+    # Start the MLflow tracking server with these options:
+    # --host 0.0.0.0                → accept connections from any container (not just localhost)
+    # --port 5000                   → run on port 5000
+    # --backend-store-uri           → where to store experiments & runs
+    # --default-artifact-root       → where to store artifacts (models, plots)
+    command: >
+      mlflow server
+      --host 0.0.0.0
+      --port 5000
+      --backend-store-uri /mlruns
+      --default-artifact-root /mlruns/artifacts
+
+    # Join the shared network
+    networks:
+      - mlops-network
+
+# ── Shared Network ───────────────────────────────────────────
+# Allows containers to talk to each other by service name
+# train → http://mlflow:5000 ✅ (works because of this network)
+networks:
+  mlops-network:
+    driver: bridge  # standard network driver for single-host communication

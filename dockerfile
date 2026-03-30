@@ -29,4 +29,4 @@ COPY . .
 # Default command to run when the container starts
 # Explicitly runs train.py inside the mlops-dev conda environment
 # Can be overridden at runtime: docker run my-image python evaluate.py
-CMD ["conda", "run", "-n", "mlops-dev", "python", "train.py"]
+CMD ["conda", "run", "-n", "mlops-dev", "python", "src/train.py"]

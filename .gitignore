@@ -1,0 +1,25 @@
+# MLflow
+mlruns/
+
+# Models & Outputs (generated files)
+models/
+outputs/
+*.pkl
+*.png
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# Data
+data/
+*.csv
+
+# OS
+.DS_Store
+
+# Docs
+docs/
+
+
