@@ -1,0 +1,13 @@
+version: "3.8"
+
+services:
+  # ── Training Service ────────────────────────────────────────
+  train:
+    # Build the image from the Dockerfile in current directory
+    build: .
+
+    # Name the container
+    container_name: iris-trainer
+
+    # Run the training script
+    command: ["conda", "run", "-n", "mlops-dev", "python", "train.py"]
