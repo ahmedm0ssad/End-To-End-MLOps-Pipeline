@@ -6,6 +6,9 @@
 
 name: MLOps CI Pipeline
 
+permissions:
+  contents: write
+
 # ── Triggers ─────────────────────────────────────────────────
 # Runs on every push or pull request to main branch
 on:
