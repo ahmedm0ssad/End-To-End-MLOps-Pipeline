@@ -10,7 +10,7 @@ name: MLOps CI Pipeline
 # Runs on every push or pull request to main branch
 on:
   push:
-    branches: [main]
+    branches: [develop]
   pull_request:
     branches: [main]
 
@@ -107,7 +107,7 @@ jobs:
         run: |
           docker build -t ${{ secrets.DOCKER_USERNAME }}/iris-trainer:latest .
           docker push ${{ secrets.DOCKER_USERNAME }}/iris-trainer:latest
-          
+
   # ── Merge Job — Auto Merge develop → main ────────────────
   merge:
     needs: deploy              # runs ONLY after deploy passes!
