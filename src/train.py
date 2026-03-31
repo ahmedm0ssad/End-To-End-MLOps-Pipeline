@@ -6,6 +6,7 @@
 
 import os
 
+import dagshub
 import matplotlib.pyplot as plt
 import mlflow
 import mlflow.sklearn
@@ -17,6 +18,13 @@ from sklearn.metrics import (
     confusion_matrix,
 )
 from sklearn.model_selection import train_test_split
+
+# ── DagsHub Init — handles auth automatically! ───────────────
+dagshub.init(
+    repo_owner=os.getenv("DAGSHUB_USERNAME", "ahmedm0ssad"),
+    repo_name="MLOps-Devlopment",
+    mlflow=True,
+)
 
 # ── DagsHub Credentials ──────────────────────────────────────
 # Read from environment variables (set as GitHub Secrets in CI/CD)
