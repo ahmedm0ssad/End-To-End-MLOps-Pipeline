@@ -2,6 +2,10 @@
 # train.py — ML Training Script with MLflow Tracking
 # Trains a RandomForest on Iris dataset
 # Logs params, metrics, and artifacts to DagsHub MLflow
+# ── DVC Integration ──────────────────────────────────────────
+# Data is loaded from data/iris.csv (tracked by DVC)
+# NOT from sklearn.datasets.load_iris() directly
+# This ensures data versioning and reproducibility
 # ============================================================
 
 import os
@@ -9,7 +13,7 @@ import os
 import matplotlib.pyplot as plt
 import mlflow
 import mlflow.sklearn
-from sklearn.datasets import load_iris
+import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import (
     ConfusionMatrixDisplay,
@@ -38,9 +42,15 @@ mlflow.set_tracking_uri(
     ).strip()                          # ← .strip() here too!
 )
 
-# ── Load Data ─────────────────────────────────────────────────
-# Iris dataset: 150 samples, 4 features, 3 classes
-X, y = load_iris(return_X_y=True)
+# ── Load Data from CSV (DVC-tracked) ─────────────────────────
+# data/iris.csv is tracked by DVC, NOT committed to Git
+# In CI/CD: dvc pull downloads the actual file before this runs
+# Locally:  run save_iris_csv.py once, then dvc add data/iris.csv
+DATA_PATH = os.getenv("DATA_PATH", "data/iris.csv")
+df = pd.read_csv(DATA_PATH)
+
+X = df.drop("target", axis=1).values   # features: 4 columns
+y = df["target"].values                 # labels: 0, 1, 2
 
 # ── Split Data ────────────────────────────────────────────────
 # 80% training, 20% testing
@@ -64,11 +74,13 @@ with mlflow.start_run(run_name="RandomForest_Iris_v1"):
     mlflow.set_tag("model_type", "RandomForest")
     mlflow.set_tag("dataset", "Iris")
     mlflow.set_tag("developer", "Mossad")
+    mlflow.set_tag("data_source", DATA_PATH)   # ← track which data file!
 
     # ② Params — input config logged ONCE per run
     mlflow.log_param("n_estimators", 100)  # number of trees
     mlflow.log_param("test_size", 0.2)     # train/test split ratio
     mlflow.log_param("random_state", 42)   # reproducibility seed
+    mlflow.log_param("data_path", DATA_PATH)   # ← log data path too!
 
     # ③ Train — fit the model on training data
     model = RandomForestClassifier(n_estimators=100)

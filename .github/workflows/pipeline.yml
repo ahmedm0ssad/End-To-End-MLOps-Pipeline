@@ -1,7 +1,11 @@
 # ============================================================
 # MLOps CI/CD Pipeline
 # Triggers: push or pull request to main branch
-# Jobs: validate (CI) → deploy (CD)
+# Jobs: validate (CI) → deploy (CD) → merge
+# ── DVC Integration ──────────────────────────────────────────
+# dvc pull downloads data/iris.csv before training
+# The actual CSV is stored in DagsHub DVC storage
+# Only the pointer file (data/iris.csv.dvc) is in Git
 # ============================================================
 
 name: MLOps CI Pipeline
@@ -35,18 +39,35 @@ jobs:
         with:
           python-version: '3.10'
 
-      # Step 3 — install all project dependencies
+      # Step 3 — install all project dependencies + DVC
+      # dvc[s3] → adds S3/DagsHub remote storage support
       - name: Install dependencies
-        run: pip install -r requirements.txt
+        run: |
+          pip install -r requirements.txt
+          pip install dvc dvc-s3
 
-      # Step 4 — lint code with flake8
+      # Step 4 — Pull data from DVC remote (DagsHub)
+      # This downloads data/iris.csv using the .dvc pointer file
+      # Without this step, data/iris.csv doesn't exist on the runner!
+      # DAGSHUB_TOKEN is used to authenticate with DagsHub storage
+      - name: Pull data with DVC
+        env:
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          dvc remote modify origin --local auth basic
+          dvc remote modify origin --local user $DAGSHUB_USERNAME
+          dvc remote modify origin --local password $DAGSHUB_TOKEN
+          dvc pull                        # downloads data/iris.csv
+
+      # Step 5 — lint code with flake8
       # Fails the pipeline if code doesn't follow PEP8 standards
       - name: Lint with flake8
         run: |
           pip install flake8
           flake8 src/
 
-      # Step 5 — train the model and log to DagsHub MLflow
+      # Step 6 — train the model and log to DagsHub MLflow
       # Secrets are passed as environment variables (never hardcoded!)
       # MLFLOW_TRACKING_URI  → where to send MLflow logs
       # DAGSHUB_USERNAME     → DagsHub account username
@@ -59,7 +80,7 @@ jobs:
           DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
         run: python src/train.py
 
-      # Step 6 — upload confusion matrix plot as artifact
+      # Step 7 — upload confusion matrix plot as artifact
       # Artifacts persist between jobs and can be downloaded later
       - name: Upload confusion-matrix
         uses: actions/upload-artifact@v4
@@ -67,7 +88,7 @@ jobs:
           name: confusion-matrix          # artifact name (used to download)
           path: outputs/confusion_matrix.png  # file to upload
 
-      # Step 7 — upload model_info.txt as artifact
+      # Step 8 — upload model_info.txt as artifact
       # Contains the MLflow model URI — used by deploy job
       - name: Upload model info
         uses: actions/upload-artifact@v4
