@@ -9,4 +9,4 @@ runs = client.search_runs(
     order_by=['metrics.accuracy DESC'],
     max_results=1)
 with open('best_model_uri.txt', 'w') as f:
-    f.write(runs[0].info.artifact_uri + '/model')   
+    f.write(runs[0].info.artifact_uri + '/model')
