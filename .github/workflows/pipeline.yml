@@ -1,0 +1,134 @@
+# ============================================================
+# MLOps CI/CD Pipeline
+# Triggers: push or pull request to main branch
+# Jobs: validate (CI) → deploy (CD)
+# ============================================================
+
+name: MLOps CI Pipeline
+
+# ── Triggers ─────────────────────────────────────────────────
+# Runs on every push or pull request to main branch
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  # ── CI Job — Validate & Train ─────────────────────────────
+  # Runs tests, linting, training, and uploads artifacts
+  validate:
+    runs-on: ubuntu-latest     # use GitHub's Ubuntu machine
+
+    steps:
+
+      # Step 1 — checkout repo code (MUST be first!)
+      # Without this, the runner has no access to your files
+      - uses: actions/checkout@v4
+
+      # Step 2 — setup Python 3.10 on the runner
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # Step 3 — install all project dependencies
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Step 4 — lint code with flake8
+      # Fails the pipeline if code doesn't follow PEP8 standards
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          flake8 src/
+
+      # Step 5 — train the model and log to DagsHub MLflow
+      # Secrets are passed as environment variables (never hardcoded!)
+      # MLFLOW_TRACKING_URI  → where to send MLflow logs
+      # DAGSHUB_USERNAME     → DagsHub account username
+      # DAGSHUB_TOKEN        → DagsHub access token (instead of password)
+      - name: Train model
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: python src/train.py
+
+      # Step 6 — upload confusion matrix plot as artifact
+      # Artifacts persist between jobs and can be downloaded later
+      - name: Upload confusion-matrix
+        uses: actions/upload-artifact@v4
+        with:
+          name: confusion-matrix          # artifact name (used to download)
+          path: outputs/confusion_matrix.png  # file to upload
+
+      # Step 7 — upload model_info.txt as artifact
+      # Contains the MLflow model URI — used by deploy job
+      - name: Upload model info
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-info               # artifact name (used to download)
+          path: model_info.txt           # file to upload
+
+  # ── CD Job — Build & Push Docker ─────────────────────────
+  # Runs ONLY after validate job passes successfully
+  deploy:
+    needs: validate            # wait for validate to pass first!
+                               # without this both jobs run in parallel!
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # Step 1 — checkout repo code
+      # Each job runs on a fresh VM — must checkout again!
+      - uses: actions/checkout@v4
+
+      # Step 2 — download model info from validate job
+      # Jobs run on separate VMs — files don't persist between them
+      # Must use artifacts to pass files between jobs
+      - name: Download model info
+        uses: actions/download-artifact@v4
+        with:
+          name: model-info               # must match upload name exactly!
+
+      # Step 3 — login to Docker Hub
+      # Uses secrets to avoid hardcoding credentials
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Step 4 — build Docker image and push to Docker Hub
+      # image name format: username/imagename:tag
+      # :latest → always points to the newest version
+      - name: Build and Push Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/iris-trainer:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/iris-trainer:latest
+          
+  # ── Merge Job — Auto Merge develop → main ────────────────
+  merge:
+    needs: deploy              # runs ONLY after deploy passes!
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1 — checkout with full permissions
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # fetch full git history for merge
+          token: ${{ secrets.GITHUB_TOKEN }}  # built-in GitHub token
+
+      # Step 2 — configure git identity
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      # Step 3 — merge develop into main
+      - name: Merge develop into main
+        run: |
+          git checkout main          # switch to main
+          git merge origin/develop   # merge develop into main
+          git push origin main       # push merged main to GitHub

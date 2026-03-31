@@ -1,7 +1,6 @@
 # Docker Compose file to orchestrate MLflow + Training services
 # Run with: docker compose up --build
 
-version: "3.8"
 
 services:
   # ── Training Service ────────────────────────────────────────
@@ -21,7 +20,7 @@ services:
     # format: ./local_folder : /container_folder
     volumes:
       - ./mlruns:/mlruns                    # share experiments & runs with MLflow container
-      - ./outputs:/Development/outputs      # save confusion_matrix.png to your machine
+      - ./outputs:/app/outputs      # save confusion_matrix.png to your machine
 
     # Wait for MLflow container to be ready before starting training
     # Without this: train starts → MLflow not ready → ❌ connection refused

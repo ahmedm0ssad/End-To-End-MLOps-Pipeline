@@ -12,7 +12,7 @@ WORKDIR /app
 COPY environment.yml .
 
 # Create the conda environment using the yml file
-# This installs Python 3.10 + all packages (numpy, pandas, mlflow, etc.)
+# This installs Python 3.10 + all packages (numpy, scikit-learn, matplotlib, mlflow)
 # Runs ONCE at build time, not every time the container starts
 RUN conda env create -f environment.yml
 
