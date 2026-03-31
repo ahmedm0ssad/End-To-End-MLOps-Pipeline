@@ -6,7 +6,6 @@
 
 import os
 
-import dagshub
 import matplotlib.pyplot as plt
 import mlflow
 import mlflow.sklearn
@@ -19,28 +18,24 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import train_test_split
 
-# ── DagsHub Init — handles auth automatically! ───────────────
-dagshub.init(
-    repo_owner=os.getenv("DAGSHUB_USERNAME", "ahmedm0ssad"),
-    repo_name="MLOps-Devlopment",
-    mlflow=True,
-)
 
-# ── DagsHub Credentials ──────────────────────────────────────
 # Read from environment variables (set as GitHub Secrets in CI/CD)
 # Locally: set these in your terminal or .env file
 # These are used by MLflow to authenticate with DagsHub
-os.environ["MLFLOW_TRACKING_USERNAME"] = os.getenv("DAGSHUB_USERNAME", "")
-os.environ["MLFLOW_TRACKING_PASSWORD"] = os.getenv("DAGSHUB_TOKEN", "")
+# ── DagsHub Credentials ───────────────────────────────────────
+os.environ["MLFLOW_TRACKING_USERNAME"] = os.getenv(
+    "DAGSHUB_USERNAME", ""
+).strip()                              # ← .strip() removes newlines!
+os.environ["MLFLOW_TRACKING_PASSWORD"] = os.getenv(
+    "DAGSHUB_TOKEN", ""
+).strip()                              # ← .strip() removes newlines!
 
 # ── MLflow Tracking URI ───────────────────────────────────────
-# Points to DagsHub remote MLflow server
-# Falls back to DagsHub URL if env variable not set
 mlflow.set_tracking_uri(
     os.getenv(
         "MLFLOW_TRACKING_URI",
         "https://dagshub.com/ahmedm0ssad/MLOps-Devlopment.mlflow",
-    )
+    ).strip()                          # ← .strip() here too!
 )
 
 # ── Load Data ─────────────────────────────────────────────────
