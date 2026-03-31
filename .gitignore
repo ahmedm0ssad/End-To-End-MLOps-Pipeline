@@ -12,10 +12,6 @@ __pycache__/
 *.pyc
 .env
 
-# Data
-data/
-*.csv
-
 # OS
 .DS_Store
 
