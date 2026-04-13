@@ -1,3 +1,4 @@
+ 
 # ============================================================
 # train.py — ML Training Script with MLflow Tracking
 # Trains a RandomForest on Iris dataset
@@ -55,7 +56,7 @@ y = df["target"].values                 # labels: 0, 1, 2
 # ── Split Data ────────────────────────────────────────────────
 # 80% training, 20% testing
 # random_state=42 ensures reproducibility
-X_train, X_test, y_train, y_test = train_test_split111(
+X_train, X_test, y_train, y_test = train_test_split(
     X, y, test_size=0.2, random_state=42
 )
 
