@@ -1,0 +1,25 @@
+# MLflow tracking data — huge, not needed in container
+mlruns/
+mlartifacts/
+
+# Generated files
+outputs/
+*.pkl
+*.png
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Sensitive files
+.env
+
+# Git
+.git/
+.github/
+
+# Docs
+docs/
+
+# OS
+.DS_Store

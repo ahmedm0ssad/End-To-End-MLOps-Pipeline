@@ -1,0 +1,159 @@
+# ============================================================
+# MLOps CI/CD Pipeline
+# Triggers: push or pull request to main branch
+# Jobs: validate (CI) → deploy (CD) → merge
+# ── DVC Integration ──────────────────────────────────────────
+# dvc pull downloads data/iris.csv before training
+# The actual CSV is stored in DagsHub DVC storage
+# Only the pointer file (data/iris.csv.dvc) is in Git
+# ============================================================
+
+name: MLOps CI Pipeline
+
+permissions:
+  contents: write
+
+# ── Triggers ─────────────────────────────────────────────────
+# Runs on every push or pull request to main branch
+on:
+  push:
+    branches: [develop]
+  pull_request:
+    branches: [main]
+
+jobs:
+
+  # ── CI Job — Validate & Train ─────────────────────────────
+  # Runs tests, linting, training, and uploads artifacts
+  validate:
+    runs-on: ubuntu-latest     # use GitHub's Ubuntu machine
+
+    steps:
+
+      # Step 1 — checkout repo code (MUST be first!)
+      # Without this, the runner has no access to your files
+      - uses: actions/checkout@v4
+
+      # Step 2 — setup Python 3.10 on the runner
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # Step 3 — install all project dependencies + DVC
+      # pinning pathspec fixes the _DIR_MARK import error
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+          pip install "dvc==3.50.0" "dvc-s3==3.2.0" "pathspec==0.11.2"
+
+      # Step 4 — Pull data from DVC remote (DagsHub)
+      # This downloads data/iris.csv using the .dvc pointer file
+      # Without this step, data/iris.csv doesn't exist on the runner!
+      # DAGSHUB_TOKEN is used to authenticate with DagsHub storage
+      - name: Pull data with DVC
+        env:
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: |
+          dvc remote modify origin --local auth basic
+          dvc remote modify origin --local user $DAGSHUB_USERNAME
+          dvc remote modify origin --local password $DAGSHUB_TOKEN
+          dvc pull                        # downloads data/iris.csv
+
+      # Step 5 — lint code with flake8
+      # Fails the pipeline if code doesn't follow PEP8 standards
+      - name: Lint with flake8
+        run: |
+          pip install flake8
+          flake8 src/
+
+      # Step 6 — train the model and log to DagsHub MLflow
+      # Secrets are passed as environment variables (never hardcoded!)
+      # MLFLOW_TRACKING_URI  → where to send MLflow logs
+      # DAGSHUB_USERNAME     → DagsHub account username
+      # DAGSHUB_TOKEN        → DagsHub access token (instead of password)
+      - name: Train model
+        env:
+          MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+          DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
+          DAGSHUB_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+          DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
+        run: python src/train.py
+
+      # Step 7 — upload confusion matrix plot as artifact
+      # Artifacts persist between jobs and can be downloaded later
+      - name: Upload confusion-matrix
+        uses: actions/upload-artifact@v4
+        with:
+          name: confusion-matrix          # artifact name (used to download)
+          path: outputs/confusion_matrix.png  # file to upload
+
+      # Step 8 — upload model_info.txt as artifact
+      # Contains the MLflow model URI — used by deploy job
+      - name: Upload model info
+        uses: actions/upload-artifact@v4
+        with:
+          name: model-info               # artifact name (used to download)
+          path: model_info.txt           # file to upload
+
+  # ── CD Job — Build & Push Docker ─────────────────────────
+  # Runs ONLY after validate job passes successfully
+  deploy:
+    needs: validate            # wait for validate to pass first!
+                               # without this both jobs run in parallel!
+    runs-on: ubuntu-latest
+
+    steps:
+
+      # Step 1 — checkout repo code
+      # Each job runs on a fresh VM — must checkout again!
+      - uses: actions/checkout@v4
+
+      # Step 2 — download model info from validate job
+      # Jobs run on separate VMs — files don't persist between them
+      # Must use artifacts to pass files between jobs
+      - name: Download model info
+        uses: actions/download-artifact@v4
+        with:
+          name: model-info               # must match upload name exactly!
+
+      # Step 3 — login to Docker Hub
+      # Uses secrets to avoid hardcoding credentials
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+
+      # Step 4 — build Docker image and push to Docker Hub
+      # image name format: username/imagename:tag
+      # :latest → always points to the newest version
+      - name: Build and Push Docker image
+        run: |
+          docker build -t ${{ secrets.DOCKER_USERNAME }}/iris-trainer:latest .
+          docker push ${{ secrets.DOCKER_USERNAME }}/iris-trainer:latest
+
+  # ── Merge Job — Auto Merge develop → main ────────────────
+  merge:
+    needs: deploy              # runs ONLY after deploy passes!
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1 — checkout with full permissions
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0       # fetch full git history for merge
+          token: ${{ secrets.GITHUB_TOKEN }}  # built-in GitHub token
+
+      # Step 2 — configure git identity
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+      # Step 3 — merge develop into main
+      - name: Merge develop into main
+        run: |
+          git checkout main          # switch to main
+          git reset --hard origin/develop
+          git push origin main --force
