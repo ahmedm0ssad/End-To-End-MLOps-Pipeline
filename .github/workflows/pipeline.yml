@@ -1,11 +1,18 @@
 # ============================================================
-# MLOps CI/CD Pipeline
-# Triggers: push or pull request to main branch
-# Jobs: validate (CI) → deploy (CD) → merge
-# ── DVC Integration ──────────────────────────────────────────
-# dvc pull downloads data/iris.csv before training
-# The actual CSV is stored in DagsHub DVC storage
-# Only the pointer file (data/iris.csv.dvc) is in Git
+# MLOps CI/CD Pipeline — Assignment 6: Gatekeeper Edition
+#
+# Jobs:
+#   linter   → lightweight check, runs on ALL branches/pushes
+#   train    → expensive GPU-class job, GATED by 3 conditions:
+#                1. linter must pass
+#                2. branch must be main
+#                3. commit message must contain [run-train]
+#   deploy   → builds & pushes Docker image (needs train)
+#   merge    → auto-merges develop → main (needs deploy)
+#
+# Failure handling:
+#   - On train failure: uploads error_logs.txt as GHA artifact
+#   - Always: prints cleanup message regardless of outcome
 # ============================================================
 
 name: MLOps CI Pipeline
@@ -14,42 +21,87 @@ permissions:
   contents: write
 
 # ── Triggers ─────────────────────────────────────────────────
-# Runs on every push or pull request to main branch
+# Linter runs on every push to any branch.
+# Train is gated — so triggering broadly is safe.
 on:
   push:
-    branches: [develop]
+    branches: ['**']
   pull_request:
     branches: [main]
 
 jobs:
 
-  # ── CI Job — Validate & Train ─────────────────────────────
-  # Runs tests, linting, training, and uploads artifacts
-  validate:
-    runs-on: ubuntu-latest     # use GitHub's Ubuntu machine
+  # ── JOB 1: LINTER — Gatekeeper (runs everywhere) ─────────
+  # Lightweight check that runs on every push/PR.
+  # The train job cannot start unless this passes.
+  linter:
+    name: Lint Codebase
+    runs-on: ubuntu-latest
 
     steps:
 
-      # Step 1 — checkout repo code (MUST be first!)
-      # Without this, the runner has no access to your files
+      # Step 1 — Checkout code
       - uses: actions/checkout@v4
 
-      # Step 2 — setup Python 3.10 on the runner
+      # Step 2 — Setup Python 3.10
       - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
-      # Step 3 — install all project dependencies + DVC
-      # pinning pathspec fixes the _DIR_MARK import error
+      # Step 3 — Install flake8 only (keep this job lightweight)
+      - name: Install flake8
+        run: pip install flake8
+
+      # Step 4 — Lint src/ directory
+      # E9   → syntax errors (runtime failures)
+      # F63  → invalid assertions / syntax
+      # F7   → syntax errors in expressions
+      # F82  → undefined names
+      # These catch broken code before any compute is spent.
+      - name: Run flake8 linter
+        run: |
+          flake8 src/ --count --select=E9,F63,F7,F82 --show-source --statistics
+
+  # ── JOB 2: TRAIN — Expensive job, triple-gated ───────────
+  # Runs ONLY when all three conditions are true:
+  #   1. linter job passed        (needs: linter)
+  #   2. push is to main branch   (github.ref check)
+  #   3. commit message has [run-train] keyword
+  #
+  # If ANY condition fails → job is SKIPPED (not failed).
+  # This prevents unnecessary GPU/compute spend.
+  train:
+    name: Validate, Train & Track
+    runs-on: ubuntu-latest
+    needs: linter                # CONDITION 1 — linter must pass
+
+    # CONDITION 2 — must be on main branch
+    # CONDITION 3 — commit message must contain [run-train]
+    if: |
+      needs.linter.result == 'success' &&
+      github.ref == 'refs/heads/main' &&
+      contains(github.event.head_commit.message, '[run-train]')
+
+    steps:
+
+      # Step 1 — Checkout repo code
+      - uses: actions/checkout@v4
+
+      # Step 2 — Setup Python 3.10
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # Step 3 — Install all project dependencies + DVC
+      # pathspec pin fixes the _DIR_MARK import error with DVC
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
           pip install "dvc==3.50.0" "dvc-s3==3.2.0" "pathspec==0.11.2"
 
       # Step 4 — Pull data from DVC remote (DagsHub)
-      # This downloads data/iris.csv using the .dvc pointer file
-      # Without this step, data/iris.csv doesn't exist on the runner!
-      # DAGSHUB_TOKEN is used to authenticate with DagsHub storage
+      # Downloads data/iris.csv using the .dvc pointer file.
+      # Without this, data/iris.csv does not exist on the runner.
       - name: Pull data with DVC
         env:
           DAGSHUB_USERNAME: ${{ secrets.DAGSHUB_USERNAME }}
@@ -58,20 +110,10 @@ jobs:
           dvc remote modify origin --local auth basic
           dvc remote modify origin --local user $DAGSHUB_USERNAME
           dvc remote modify origin --local password $DAGSHUB_TOKEN
-          dvc pull                        # downloads data/iris.csv
+          dvc pull
 
-      # Step 5 — lint code with flake8
-      # Fails the pipeline if code doesn't follow PEP8 standards
-      - name: Lint with flake8
-        run: |
-          pip install flake8
-          flake8 src/
-
-      # Step 6 — train the model and log to DagsHub MLflow
-      # Secrets are passed as environment variables (never hardcoded!)
-      # MLFLOW_TRACKING_URI  → where to send MLflow logs
-      # DAGSHUB_USERNAME     → DagsHub account username
-      # DAGSHUB_TOKEN        → DagsHub access token (instead of password)
+      # Step 5 — Train the model and log to DagsHub MLflow
+      # Secrets passed as env vars — never hardcoded.
       - name: Train model
         env:
           MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
@@ -80,80 +122,111 @@ jobs:
           DAGSHUB_USER_TOKEN: ${{ secrets.DAGSHUB_TOKEN }}
         run: python src/train.py
 
-      # Step 7 — upload confusion matrix plot as artifact
-      # Artifacts persist between jobs and can be downloaded later
+      # Step 6 — Upload confusion matrix plot as artifact
       - name: Upload confusion-matrix
         uses: actions/upload-artifact@v4
         with:
-          name: confusion-matrix          # artifact name (used to download)
-          path: outputs/confusion_matrix.png  # file to upload
+          name: confusion-matrix
+          path: outputs/confusion_matrix.png
 
-      # Step 8 — upload model_info.txt as artifact
-      # Contains the MLflow model URI — used by deploy job
+      # Step 7 — Upload model_info.txt for the deploy job
       - name: Upload model info
         uses: actions/upload-artifact@v4
         with:
-          name: model-info               # artifact name (used to download)
-          path: model_info.txt           # file to upload
+          name: model-info
+          path: model_info.txt
 
-  # ── CD Job — Build & Push Docker ─────────────────────────
-  # Runs ONLY after validate job passes successfully
+      # ── FAILURE HANDLER ───────────────────────────────────
+      # Runs ONLY when the train job fails.
+      # Generates a structured error log so the developer can
+      # investigate without re-running the expensive job.
+      - name: Capture error logs on failure
+        if: failure()
+        run: |
+          echo "============================================" >  error_logs.txt
+          echo "  MLOps Pipeline — Training Failure Report" >> error_logs.txt
+          echo "============================================" >> error_logs.txt
+          echo "Timestamp : $(date -u)"                      >> error_logs.txt
+          echo "Branch    : ${{ github.ref_name }}"          >> error_logs.txt
+          echo "Commit SHA: ${{ github.sha }}"               >> error_logs.txt
+          echo "Actor     : ${{ github.actor }}"             >> error_logs.txt
+          echo "Commit Msg: ${{ github.event.head_commit.message }}" >> error_logs.txt
+          echo "--------------------------------------------" >> error_logs.txt
+          echo "Review the Actions run logs for full traceback." >> error_logs.txt
+
+      - name: Upload error logs artifact
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error_logs           # downloadable from the Actions UI
+          path: error_logs.txt
+          retention-days: 7         # kept for 7 days for investigation
+
+      # ── ALWAYS RUNS — Cleanup ─────────────────────────────
+      # Executes regardless of success or failure.
+      # Simulates releasing temporary cloud volume allocations.
+      - name: Cleanup temporary cloud volumes
+        if: always()
+        run: |
+          echo "Cleaning up temporary cloud volumes..."
+
+  # ── JOB 3: DEPLOY — Build & Push Docker Image ────────────
+  # Runs ONLY after train passes successfully.
   deploy:
-    needs: validate            # wait for validate to pass first!
-                               # without this both jobs run in parallel!
+    name: Build & Push Docker Image
+    needs: train
     runs-on: ubuntu-latest
 
     steps:
 
-      # Step 1 — checkout repo code
-      # Each job runs on a fresh VM — must checkout again!
+      # Step 1 — Checkout repo code (fresh VM — must re-checkout)
       - uses: actions/checkout@v4
 
-      # Step 2 — download model info from validate job
+      # Step 2 — Download model info artifact from train job
       # Jobs run on separate VMs — files don't persist between them
-      # Must use artifacts to pass files between jobs
       - name: Download model info
         uses: actions/download-artifact@v4
         with:
-          name: model-info               # must match upload name exactly!
+          name: model-info
 
-      # Step 3 — login to Docker Hub
-      # Uses secrets to avoid hardcoding credentials
+      # Step 3 — Login to Docker Hub
       - name: Login to Docker Hub
         uses: docker/login-action@v3
         with:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
-      # Step 4 — build Docker image and push to Docker Hub
-      # image name format: username/imagename:tag
-      # :latest → always points to the newest version
+      # Step 4 — Build and push Docker image
       - name: Build and Push Docker image
         run: |
           docker build -t ${{ secrets.DOCKER_USERNAME }}/iris-trainer:latest .
           docker push ${{ secrets.DOCKER_USERNAME }}/iris-trainer:latest
 
-  # ── Merge Job — Auto Merge develop → main ────────────────
+  # ── JOB 4: MERGE — Auto-merge develop → main ─────────────
+  # Runs ONLY after deploy passes.
+  # Force-syncs main to origin/develop (linear promotion path).
   merge:
-    needs: deploy              # runs ONLY after deploy passes!
+    name: Merge develop into main
+    needs: deploy
     runs-on: ubuntu-latest
 
     steps:
-      # Step 1 — checkout with full permissions
+
+      # Step 1 — Checkout with full git history and write token
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0       # fetch full git history for merge
-          token: ${{ secrets.GITHUB_TOKEN }}  # built-in GitHub token
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      # Step 2 — configure git identity
+      # Step 2 — Configure git identity for the merge commit
       - name: Configure Git
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@github.com"
 
-      # Step 3 — merge develop into main
+      # Step 3 — Hard-reset main to develop and force-push
       - name: Merge develop into main
         run: |
-          git checkout main          # switch to main
+          git checkout main
           git reset --hard origin/develop
           git push origin main --force
