@@ -1,5 +1,11 @@
 # End-To-End MLOps Pipeline
 
+[![Python](https://img.shields.io/badge/Python-3.10-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
+[![MLflow](https://img.shields.io/badge/MLflow-0194E2?style=flat&logo=mlflow&logoColor=white)](https://mlflow.org/)
+[![DVC](https://img.shields.io/badge/DVC-945DD6?style=flat&logo=dvc&logoColor=white)](https://dvc.org/)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=flat&logo=docker&logoColor=white)](https://www.docker.com/)
+[![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-2088FF?style=flat&logo=githubactions&logoColor=white)](https://github.com/features/actions)
+
 A compact, reproducible MLOps reference implementation built around the **Iris classification** problem. It demonstrates how to move a machine-learning model from a local notebook to a versioned, tracked, containerized, and CI/CD-driven pipeline.
 
 > **Maturity:** production-oriented foundations (data versioning, experiment tracking, CI/CD, containerization) with a clear roadmap for serving and monitoring.
